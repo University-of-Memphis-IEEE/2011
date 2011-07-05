@@ -1,0 +1,44 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 11.00
+# AvrStudio Solution File, Format Version 11.00
+Project("{D1100916-62DA-4D80-A9B4-55A1E7CCEEB3}") = "Drive", "Drive\Drive.avrgccproj", "{C9DBDC10-F8C9-448A-B033-D31413ACB27E}"
+EndProject
+Project("{D1100916-62DA-4D80-A9B4-55A1E7CCEEB3}") = "MotorControllerInterfaces", "MotorControllerInterfaces\MotorControllerInterfaces.avrgccproj", "{A2730728-E04C-4B49-8627-CE9BBA22EADC}"
+EndProject
+Project("{D1100916-62DA-4D80-A9B4-55A1E7CCEEB3}") = "WheelEncoderInterface", "WheelEncoderInterface\WheelEncoderInterface.avrgccproj", "{8F06DE87-02BB-4750-9B36-74699F0BC013}"
+EndProject
+Project("{D1100916-62DA-4D80-A9B4-55A1E7CCEEB3}") = "MagnetometerInterface", "MagnetometerInterface\MagnetometerInterface.avrgccproj", "{B1B7737A-8583-4FE1-B47E-55F5B0DEF4FF}"
+EndProject
+Project("{D1100916-62DA-4D80-A9B4-55A1E7CCEEB3}") = "AHRSinterface", "AHRSinterface\AHRSinterface.avrgccproj", "{CBF5F9D0-752E-44B3-B89A-D1D500E91462}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|AVR = Debug|AVR
+		Release|AVR = Release|AVR
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{C9DBDC10-F8C9-448A-B033-D31413ACB27E}.Debug|AVR.ActiveCfg = Debug|AVR
+		{C9DBDC10-F8C9-448A-B033-D31413ACB27E}.Debug|AVR.Build.0 = Debug|AVR
+		{C9DBDC10-F8C9-448A-B033-D31413ACB27E}.Release|AVR.ActiveCfg = Release|AVR
+		{C9DBDC10-F8C9-448A-B033-D31413ACB27E}.Release|AVR.Build.0 = Release|AVR
+		{A2730728-E04C-4B49-8627-CE9BBA22EADC}.Debug|AVR.ActiveCfg = Debug|AVR
+		{A2730728-E04C-4B49-8627-CE9BBA22EADC}.Debug|AVR.Build.0 = Debug|AVR
+		{A2730728-E04C-4B49-8627-CE9BBA22EADC}.Release|AVR.ActiveCfg = Release|AVR
+		{A2730728-E04C-4B49-8627-CE9BBA22EADC}.Release|AVR.Build.0 = Release|AVR
+		{8F06DE87-02BB-4750-9B36-74699F0BC013}.Debug|AVR.ActiveCfg = Debug|AVR
+		{8F06DE87-02BB-4750-9B36-74699F0BC013}.Debug|AVR.Build.0 = Debug|AVR
+		{8F06DE87-02BB-4750-9B36-74699F0BC013}.Release|AVR.ActiveCfg = Release|AVR
+		{8F06DE87-02BB-4750-9B36-74699F0BC013}.Release|AVR.Build.0 = Release|AVR
+		{B1B7737A-8583-4FE1-B47E-55F5B0DEF4FF}.Debug|AVR.ActiveCfg = Debug|AVR
+		{B1B7737A-8583-4FE1-B47E-55F5B0DEF4FF}.Debug|AVR.Build.0 = Debug|AVR
+		{B1B7737A-8583-4FE1-B47E-55F5B0DEF4FF}.Release|AVR.ActiveCfg = Release|AVR
+		{B1B7737A-8583-4FE1-B47E-55F5B0DEF4FF}.Release|AVR.Build.0 = Release|AVR
+		{CBF5F9D0-752E-44B3-B89A-D1D500E91462}.Debug|AVR.ActiveCfg = Debug|AVR
+		{CBF5F9D0-752E-44B3-B89A-D1D500E91462}.Debug|AVR.Build.0 = Debug|AVR
+		{CBF5F9D0-752E-44B3-B89A-D1D500E91462}.Release|AVR.ActiveCfg = Release|AVR
+		{CBF5F9D0-752E-44B3-B89A-D1D500E91462}.Release|AVR.Build.0 = Release|AVR
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+EndGlobal

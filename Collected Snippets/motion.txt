@@ -1,0 +1,391 @@
+#include <Flash.h>
+#include <EEPROM.h>
+#include <Stepper.h>
+#include <math.h>
+
+// pin defines
+#define Estop 2 // interrupt 0 on digital pin 2.  Testing use only.  Final configuration will use this pin for audio.  All interrupt pins already in use.
+#define magAnalogPin 0
+#define leftMotorGreen      7 // HIGH turns on Green LED on motor controller, pin connected to(color) logic wire and corresponds to (color) wire attached to left motor
+#define leftMotorRed        8 // HIGH turns on Red   LED on motor controller, pin connected to(color) logic wire and corresponds to (color) wire attached to left motor
+#define leftMotorPWMpin     9 // connected to left enable pin on motor controller with white logic wire
+#define rightMotorGreen    10 // HIGH turns on Green LED on motor controller, pin connected to(red or black) logic wire and corresponds to (color) wire attached to right motor
+#define rightMotorRed      11 // HIGH turns on Red   LED on motor controller, pin connected to(red or black) logic wire and corresponds to (color) wire attached to right motor
+#define rightMotorPWMpin   12 // connected to right enable pin on motor controller with white logic wire
+#define ledPin 30     // LED 
+#define ledGnd 31
+#define switchPin 53  // switch input
+
+// other defines
+#define Left 'L'  // used for int type to indicate left
+#define Right 'R'  // used for int type to indicate right
+#define maxSpeed 255
+#define turnSpeed 192  // in case we need to slow down to take our turns.
+// these need to be optimized during physical testing
+#define accelStep 32   // largest instantaneous jump in speed.  Should be the largest value that does not result in wheelspin or wheelies.
+#define accelLoops 8 // higher number smooths out the acceleration at the cost of time, and distance over course.  If raising accelLoops, compensate by lowering accelTimeOnLoop
+#define accelTimeOnLoop 15 //milliseconds,  adjust to the shortest time that does not result in wheelspin or wheelies.
+
+// cardinal headings  make any comparisons to heading +/- headingTolerance
+#define  eastHeading 	  0  // heading divides the unit circle into 256 parts 0-255
+#define  northeastHeading 256 * 1/8
+#define  northHeading	  256 * 2/8
+#define  northwestHeading 256 * 3/8
+#define  westHeading 	  256 * 4/8
+#define  southwestHeading 256 * 5/8
+#define  southHeading 	  256 * 6/8
+#define  southeastHeading 256 * 7/8
+  
+#define headingTolerance  8
+  
+//global variables   
+volatile byte magneticHeading = analogRead(pinMagnetometer)/128; // scale from 0-1024 down to 0-255 
+volatile byte compassOffset;
+// use this if mag is an analog input, else convert whatever its format to BAM binary angle measure  
+volatile byte currentHeading = magneticHeading + compassOffset; // heading overflows at 255 
+const int wheelSep = 14;//cm
+volatile int vLeft; // measure the actual velocity produced at each of 256 pwm outputs
+volatile int vRight;// then create a lookup table, measure with encoder to use actual velocities, immune to voltage or frictional changes.  Still innacurate if whhel slippage.
+volatile int theta; // angle of final orientation with respect to initial orientation.
+volatile int pwmLeft;
+volatile int pwmRight;
+volatile boolean stopRequested = false;
+volatile int leftEncoderTicsSoFar = 0;
+volatile int rightEncoderTicsSoFar = 0;
+
+/*     Equations of some use
+
+cosine is sine from angle+fullcircle/4
+arctan(x) = x / (1 + 0.28x2) + e(x), where |e(x)| = .005 over -1 = x = 1
+
+(x,y)is the center point between the wheels
+dx/dt = 1/2 * (Vleft + Vright) * cos(Theta)
+dy/dt = 1/2 * (Vleft + Vright) * sin(Theta)
+dTheta/dt = 1/botWidth * (Vleft - Vright)
+dVleft/dt = pwmLeft
+dVright/dt = pwmRight
+
+*/
+
+//test variables.  delete in final code
+int switchCount = 0;
+int buttonState = 0;         // current state of the button
+int lastButtonState = 0;     // previous state of the button
+
+void setup()
+{
+  pinMode(leftMotorGreen, OUTPUT);
+  pinMode(leftMotorRed, OUTPUT);
+  pinMode(leftMotorPWMpin, OUTPUT);
+  
+  pinMode(rightMotorGreen, OUTPUT);
+  pinMode(rightMotorRed, OUTPUT);
+  pinMode(rightMotorPWMpin, OUTPUT);
+  
+  pinMode(ledPin, OUTPUT);
+  pinMode(ledGnd, OUTPUT);
+  digitalWrite(ledGnd, LOW);
+  
+   // set the switch as an input and activate internal pullup resistor
+  pinMode(switchPin, INPUT); 
+  digitalWrite(switchPin, HIGH);  
+  pinMode(Estop, INPUT);
+  digitalWrite(Estop, HIGH);
+  
+  // blink the LED 3 times when Arduino is reset, probably indicates the Arduino lost power
+  blink(ledPin, 3, 500);
+  attachInterrupt(0,stopBot,FALLING);// Estop Emergency Stop on pin 2 triggers when pin is grounded.  Will not retrigger if held down.  Only triggers on falling edge.
+}
+
+
+void loop()// test code
+{
+   // read the pushbutton input pin:
+  buttonState = digitalRead(switchPin);
+  delay(10); // switch debounce
+
+  // compare the buttonState to its previous state, dont keep incrementing while button is pressed
+  if (buttonState != lastButtonState) 
+  {
+    if (buttonState == LOW) 
+    {
+      // then the button went from off to on, increment the counter to trigger next bot behavior.
+      switchCount++;
+    }
+  }
+  // save the current state as the last state, 
+  //for next time through the loop
+  lastButtonState = buttonState;
+      
+  if (switchCount > 10)
+  switchCount = 0;
+  
+  switch (switchCount) // change these case statements to suit the needs of testing.
+  {
+  case 0:
+    stopBot();
+    break;
+  case 1:
+    accelTo(32,32);// straight line low speed
+    break;
+  case 2:
+    accelTo(192,192); // straight line 3/4 speed
+    break;
+  case 3:
+    stopBot(); // brake
+    break;
+  case 4:
+    accelTo(-127,-127);// back up 1/2 speed
+    break;
+  case 5:
+    accelTo(0, -64); // pivot in reverse on left wheel
+    break;
+  case 6:
+    accelTo(-64, 0); // pivot in reverse on right wheel
+    break;
+  case 7:
+    accelTo(255, 128); // zig zag forward
+    delay(510);
+    accelTo(128, 255);
+    delay(500);// 10 ms eatten each loop by debounce + code execution.
+   // monitor how closely left turns equal right turns    
+    break;
+  case 8:
+    stopBot();
+    accelTo(255, 0);//J turn
+    delay(10);
+    stopBot();
+    accelTo(0, 255);
+    break;
+  case 9:
+    stopBot(); // stop
+    break;
+  case 10:
+    blink(ledPin, 12, 80); // blink LED to signal that next push starts the sequence over.
+    break; 
+  default: 
+    stopBot();
+ }
+}
+
+// helper functions
+void stopBot()
+{
+  accelTo(0,0);
+}
+
+unsigned long forward(int encoderTics) // each encoder tick should be some known 1/integer fraction of a grid square distance.  
+{   // Measure circumference of wheel and lay out encoder markings accordingly.
+  attachInterrupt(1,leftWheelEncoderTick,CHANGE);
+  attachInterrupt(2,rightWheelEncoderTick,CHANGE);
+  leftEncoderTicsSoFar = 0;
+  rightEncoderTicsSoFar = 0;
+  startTime = accelTo(255,255);
+  while ((leftEncoderTicsSoFar + rightEncoderTicsSoFar)/2 < encoderTics && !stopRequested) // we have not yet gone the requested distance.
+    {nop();}// keep going
+  endTime = accelTo(0,0); // fell through while loop, at requested position, stop
+  detachInterrupt(1);
+  detachInterrupt(2);
+  return endTime - startTime; // travel time
+}
+
+unsigned long backward(int encoderTics)
+{
+  attachInterrupt(1,leftWheelEncoderTick,CHANGE);
+  attachInterrupt(2,rightWheelEncoderTick,CHANGE);
+  leftEncoderTicsSoFar = 0;
+  rightEncoderTicsSoFar = 0;
+  startTime = accelTo(-255,-255);
+  while ((leftEncoderTicsSoFar + rightEncoderTicsSoFar)/2 < encoderTics && !stopRequested) // we have not yet gone the requested distance.
+    {nop();}// keep going
+  endTime = accelTo(0,0); // fell through while loop, at requested position, stop
+  detachInterrupt(1);
+  detachInterrupt(2);
+  return endTime - startTime; // travel time
+}
+
+unsigned long turnTo(int angle) // angle between -255 and +255
+{                     // negative values indicate counterclockwise spin, positive values clockwise
+  attachInterrupt(1,leftWheelEncoderTick,CHANGE);
+  attachInterrupt(2,rightWheelEncoderTick,CHANGE);
+  leftEncoderTicsSoFar = 0;
+  rightEncoderTicsSoFar = 0;
+  
+  int reqHeading = currentHeading + angle;
+  if (angle < 0) // left turn
+    startTime = accelTo(-turnspeed,turnspeed);
+  else if (angle > 0)// right turn
+    startTime = accelTo(turnspeed,-turnspeed);  
+  else // no turn
+    {return 0;}
+    
+  while ((!(currentHeading >= reqHeading - headingTolerance && currentHeading <= reqHeading + headingTolerance) && !stopRequested) // we have not yet gone the requested angle. TODO double check this logic.
+    {nop();}// keep going
+    
+  endTime = accelTo(0,0); // fell through while loop, at requested position, stop
+  detachInterrupt(1);
+  detachInterrupt(2);
+  return endTime - startTime; // travel time
+}
+
+void setMotorSpeed()
+{
+  constrain(pwmLeft, -255,255);
+  constrain(pwmRight, -255,255);
+/*  
+  if (pwmLeft < -255)// catch and fix any out of bounds values
+    pwmLeft = -255;
+  if (pwmLeft > 255)
+    pwmLeft = 255;
+  if (pwmRight < -255)
+    pwmRight = -255;
+  if (pwmRight > 255)
+    pwmRight = 255;// catch and fix any out of bounds values
+*/    
+    
+/* 
+Please double check this following section of code against actual bot operation.  
+I forgot which signals result in which direction
+*/
+
+
+// this block sets the left motor direction    
+  if (pwmLeft > 0)  //left motor should go forward
+  {
+    digitalWrite(leftMotorGreen, LOW);
+    digitalWrite(leftMotorRed, HIGH);
+  }
+  else if (pwmLeft < 0)//left motor should go backward
+  {
+    digitalWrite(leftMotorGreen, HIGH);
+    digitalWrite(leftMotorRed, LOW);
+  }
+  else // braking required to stop bot
+  {
+    digitalWrite(leftMotorGreen, LOW);
+    digitalWrite(leftMotorRed, LOW);
+  }
+  
+ // this block sets the right motor direction    
+  if (pwmRight > 0)  //right motor should go forward
+  {
+    digitalWrite(rightMotorGreen, LOW);
+    digitalWrite(rightMotorRed, HIGH);
+  }
+  else if (pwmRight < 0)//right motor should go backward
+  {
+    digitalWrite(rightMotorGreen, HIGH);
+    digitalWrite(rightMotorRed, LOW);
+  }
+  else // braking required to stop bot
+  {
+    digitalWrite(rightMotorGreen, LOW);
+    digitalWrite(rightMotorRed, LOW);
+  }
+  
+  // this block sets the motors speed
+  analogWrite(leftMotorPWMpin, abs(pwmLeft));
+  analogWrite(rightMotorPWMpin, abs(pwmRight));
+}
+
+unsigned long accelTo(int leftReq, int rightReq) // parameters represent requested ending speed for each side
+{
+  unsigned long startMove;
+  boolean looped = FALSE;
+  int leftDifference,rightDifference;
+  // init differences, and check if the accel is so big there is a need to run the loop
+  if (abs(leftDifference = leftReq - pwmLeft) >= accelStep && abs(rightDifference = rightReq - pwmRight) >= accelStep)
+  {
+    for (int loops = accelLoops; loops >= 1; loops--) // every acceleration except those less than accelStep will occur in a fixed time interval (accelLoops * accelTimeOnLoop)
+    { 
+      if (loops == accelLoops/2) // halfway through the acceleration start the clock
+        {startMove = millis();}
+      pwmLeft += leftDifference/accelLoops;      // on each loop increment the wheel speed a fraction of the difference between 
+      pwmRight += rightDifference/accelLoops;    // target speed and current speed
+      setMotorSpeed();
+      delay(accelTimeOnLoop); //milliseconds, adjust to the shortest time that does not result in wheelspin or wheelies.
+    }
+  }
+  else 
+  {  startMove = millis();  }
+  
+  pwmLeft = leftReq;
+  pwmRight = rightReq;
+  setMotorSpeed();
+  
+  return startMove;
+}
+
+
+/*
+    blinks an LED for diagnostic purposes
+   */
+  void blink(int whatPin, int howManyTimes, int milliSecs) 
+  {
+    for (int i = 0; i < howManyTimes; i++) 
+    {
+      digitalWrite(whatPin, HIGH);
+      delay(milliSecs/2);
+      digitalWrite(whatPin, LOW);
+      delay(milliSecs/2);
+    }
+  }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+FLASH_TABLE(unsigned int, flashMap, 24, // 2d array stored in fl
+{
+{+,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,+}
+{¦,·,·,·,·,·,·,·,·,·,·,·,¦,·,·,·,·,·,·,·,·,·,·,·,¦}
+{¦,·,+,-,-,-,-,-,-,-,-,-,+,-,-,-,-,-,-,-,-,-,+,·,¦}
+{¦,·,¦,·,·,·,·,·,¦,·,·,·,¦,·,·,·,¦,·,·,·,·,·,¦,·,¦}
+{¦,·,¦,·,·,·,·,·,¦,·,¦,·,¦,·,¦,·,¦,·,·,·,·,·,¦,·,¦}
+{¦,·,¦,·,·,·,·,·,¦,·,¦,·,¦,·,¦,·,¦,·,·,·,·,·,¦,·,¦}
+{¦,·,¦,·,·,·,·,·,¦,·,¦,·,¦,·,¦,·,¦,·,·,·,·,·,¦,·,¦}
+{¦,·,¦,·,·,·,·,·,¦,·,¦,·,¦,·,¦,·,¦,·,·,·,·,·,¦,·,¦}
+{¦,·,+,-,-,-,-,-,+,·,¦,·,¦,·,¦,·,+,-,-,-,-,-,+,·,¦}
+{¦,·,·,·,·,·,·,·,·,·,¦,·,¦,·,¦,·,·,·,·,·,·,·,·,·,¦}
+{+,-,-,-,-,-,-,-,-,-,+,·,¦,·,+,-,-,-,-,-,-,-,-,-,¦}
+{¦,·,·,·,·,·,·,·,·,·,·,·,¦,·,·,·,·,·,·,·,·,·,·,·,¦}
+{¦,-,-,-,-,-,-,-,-,-,-,-,+,-,-,-,-,-,-,-,-,-,-,-,¦}
+{¦,·,¦,·,·,·,·,·,·,·,·,·,¦,·,·,·,·,·,·,·,·,·,¦,·,¦}
+{¦,·,¦,·,-,-,-,-,-,-,+,·,¦,·,+,-,-,-,-,-,-,·,¦,·,¦}
+{¦,·,¦,·,·,·,·,·,·,·,¦,·,¦,·,¦,·,·,·,·,·,·,·,¦,·,¦}
+{¦,·,¦,-,-,-,-,-,+,·,¦,·,¦,·,¦,·,+,-,-,-,-,-,¦,·,¦}
+{¦,·,¦,·,·,·,·,·,¦,·,¦,·,¦,·,¦,·,¦,·,·,·,·,·,¦,·,¦}
+{¦,·,¦,·,·,·,·,·,¦,·,¦,·,¦,·,¦,·,¦,·,·,·,·,·,¦,·,¦}
+{¦,·,¦,·,·,·,·,·,¦,·,¦,·,¦,·,¦,·,¦,·,·,·,·,·,¦,·,¦}
+{¦,·,¦,·,·,·,·,·,¦,·,¦,·,¦,·,¦,·,¦,·,·,·,·,·,¦,·,¦}
+{¦,·,¦,·,·,·,·,·,¦,·,¦,·,¦,·,¦,·,¦,·,·,·,·,·,¦,·,¦}
+{¦,·,+,-,-,-,-,-,+,·,¦,·,·,·,¦,·,+,-,-,-,-,-,+,·,¦}
+{¦,·,·,·,·,·,·,·,·,·,¦,#,#,#,¦,·,·,·,·,·,·,·,·,·,¦}
+{+,-,-,-,-,-,-,-,-,-,-,#,#,#,-,-,-,-,-,-,-,-,-,-,+}
+}
+
+int walls[] = { '+','+','+' , '+','+', '¦', '-','¦','-' };
+int paths[] = { '+', '+','+' , '+','¦', '¦', '-','¦', '-', '+'};
+int pathHitsWall[] = { '¦', '¦', '-' };// each represents a unique point
+int startArea = '#';
+int openCourse = '·';
